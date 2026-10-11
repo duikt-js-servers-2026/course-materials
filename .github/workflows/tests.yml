@@ -1,0 +1,20 @@
+name: Автотести етапу
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Встановлення залежностей
+        run: if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - name: Запуск тестів
+        run: npm test
