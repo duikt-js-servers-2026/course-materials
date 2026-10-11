@@ -8,6 +8,7 @@
 | 2 | [docs/stage2.md](docs/stage2.md) | `test/stage2.test.js` |
 | 3 | [docs/stage3.md](docs/stage3.md) | `test/stage3.test.js` |
 | 4 | [docs/stage4.md](docs/stage4.md) | `test/stage4.test.js` |
+| 5 | [docs/stage5.md](docs/stage5.md) | `test/stage5.test.js` |
 
 ## Як додати новий етап у свій репозиторій
 
