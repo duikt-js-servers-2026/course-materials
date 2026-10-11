@@ -24,7 +24,7 @@ createRestApp({
   auth: {
     secret: process.env.JWT_SECRET,  // секрет для підпису токенів, щонайменше 16 символів
     tokenTtl: 3600,                  // термін дії токена в секундах (за замовчуванням 3600)
-    adminEmails: ['admin@duikt.edu.ua'], // хто при реєстрації отримує роль admin
+    adminEmails: ['admin@example.com'], // хто при реєстрації отримує роль admin (необов’язково, за замовчуванням [])
   },
 });
 ```
@@ -84,9 +84,9 @@ npm test
 Перевірте й руками через curl або Postman:
 
 ```bash
-JWT_SECRET=dev-secret-change-me-123 ADMIN_EMAILS=you@duikt.edu.ua node src/rest.js
-curl -i -X POST localhost:3000/api/auth/register -H 'content-type: application/json' -d '{"email":"you@duikt.edu.ua","password":"password123"}'
-curl -i -X POST localhost:3000/api/auth/login -H 'content-type: application/json' -d '{"email":"you@duikt.edu.ua","password":"password123"}'
+JWT_SECRET=dev-secret-change-me-123 ADMIN_EMAILS=you@example.com node src/rest.js
+curl -i -X POST localhost:3000/api/auth/register -H 'content-type: application/json' -d '{"email":"you@example.com","password":"password123"}'
+curl -i -X POST localhost:3000/api/auth/login -H 'content-type: application/json' -d '{"email":"you@example.com","password":"password123"}'
 curl -i localhost:3000/api/auth/me -H 'authorization: Bearer <токен>'
 ```
 

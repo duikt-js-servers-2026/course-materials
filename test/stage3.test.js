@@ -15,6 +15,7 @@ const mod = (name) => { const p = path.join(ROOT, 'src', name); assert.ok(fs.exi
 // Локальний тестовий сервер: інтернет не потрібен.
 let server, base;
 const flaky = new Map();
+const hits = new Map(); // скільки разів запитували кожну адресу /status/...
 before(async () => {
   server = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://x');
@@ -22,7 +23,7 @@ before(async () => {
     const parts = u.pathname.split('/').filter(Boolean);
     if (parts[0] === 'item') return json(200, { id: Number(parts[1]) });
     if (parts[0] === 'delay') return setTimeout(() => json(200, { waited: Number(parts[1]) }), Number(parts[1]));
-    if (parts[0] === 'status') return json(Number(parts[1]), { error: true });
+    if (parts[0] === 'status') { const k = u.pathname; hits.set(k, (hits.get(k) ?? 0) + 1); return json(Number(parts[1]), { error: true }); }
     if (parts[0] === 'hang') return; // ніколи не відповідає
     if (parts[0] === 'broken') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{not json'); }
     if (parts[0] === 'flaky') { // перші N запитів з ключем key -> 503, далі 200
@@ -37,6 +38,8 @@ before(async () => {
   base = `http://127.0.0.1:${server.address().port}`;
 });
 after(() => { server.closeAllConnections?.(); server.close(); });
+const TMPDIRS = [];
+after(() => { for (const d of TMPDIRS) fs.rmSync(d, { recursive: true, force: true }); });
 
 const run = (...args) => new Promise((resolve) => {
   execFile(process.execPath, [COLLECT, ...args], { cwd: ROOT, timeout: 15000 }, (err, stdout, stderr) => {
@@ -58,7 +61,8 @@ describe('етап 3: fetchJson', () => {
   });
   test('4xx - помилка «HTTP <код>» без повторів', async () => {
     const { fetchJson } = mod('fetcher.js');
-    await assert.rejects(fetchJson(`${base}/status/404`, { retries: 3 }), /HTTP 404/);
+    await assert.rejects(fetchJson(`${base}/status/404?t=no-retry`, { retries: 3 }), /HTTP 404/);
+    assert.equal(hits.get('/status/404'), 1, 'після 4xx повторних запитів бути не повинно');
   });
   test('5xx після вичерпання повторів - помилка «HTTP 500»', async () => {
     const { fetchJson } = mod('fetcher.js');
@@ -112,6 +116,7 @@ describe('етап 3: loadAll', () => {
 
 describe('етап 3: analyzeLog (Streams)', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stage3-'));
+  TMPDIRS.push(dir);
   const big = path.join(dir, 'big.log');
   before(() => {
     const lines = [];
@@ -139,15 +144,28 @@ describe('етап 3: analyzeLog (Streams)', () => {
     ]);
   });
   test('файл читається потоком, а не цілком у пам’ять', async () => {
-    const { analyzeLog } = mod('logstats.js');
-    const orig = { sync: fs.readFileSync, prom: fs.promises.readFile, cb: fs.readFile };
-    const ban = () => { throw new Error('readFile заборонено: використовуйте Streams (fs.createReadStream)'); };
-    fs.readFileSync = ban; fs.promises.readFile = ban; fs.readFile = ban;
+    const file = path.join(ROOT, 'src', 'logstats.js');
+    assert.ok(fs.existsSync(file), 'має існувати файл src/logstats.js');
+    const orig = { sync: fs.readFileSync, prom: fs.promises.readFile, cb: fs.readFile, stream: fs.createReadStream };
+    const opened = [];
+    const ban = (p) => {
+      if (String(p) === big) throw new Error('readFile заборонено: використовуйте Streams (fs.createReadStream)');
+      return orig.sync(p);
+    };
+    // Підміняємо ДО завантаження модуля, тож заборона діє й на const { readFileSync } = require('node:fs').
+    fs.readFileSync = (p, ...a) => (String(p) === big ? ban(p) : orig.sync(p, ...a));
+    fs.promises.readFile = (p, ...a) => (String(p) === big ? Promise.reject(new Error('readFile заборонено: використовуйте Streams')) : orig.prom(p, ...a));
+    fs.readFile = (p, ...a) => { if (String(p) === big) { const cb = a[a.length - 1]; return cb(new Error('readFile заборонено: використовуйте Streams')); } return orig.cb(p, ...a); };
+    fs.createReadStream = (p, ...a) => { opened.push(String(p)); return orig.stream(p, ...a); };
+    delete require.cache[require.resolve(file)];
     try {
+      const { analyzeLog } = require(file);
       const s = await analyzeLog(big);
       assert.equal(s.lines, 60000);
+      assert.ok(opened.includes(big), 'файл журналу має відкриватися через fs.createReadStream');
     } finally {
-      fs.readFileSync = orig.sync; fs.promises.readFile = orig.prom; fs.readFile = orig.cb;
+      fs.readFileSync = orig.sync; fs.promises.readFile = orig.prom; fs.readFile = orig.cb; fs.createReadStream = orig.stream;
+      delete require.cache[require.resolve(file)];
     }
   });
   test('неіснуючий файл - відхилений проміс', async () => {

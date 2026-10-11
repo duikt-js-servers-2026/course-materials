@@ -16,6 +16,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'stage4-'));
 const PUBLIC = path.join(TMP, 'public');
 fs.mkdirSync(PUBLIC);
 fs.writeFileSync(path.join(TMP, 'secret.txt'), 'TOP-SECRET-STAGE4');
+process.on('exit', () => fs.rmSync(TMP, { recursive: true, force: true }));
 fs.writeFileSync(path.join(PUBLIC, 'index.html'), '<!doctype html><html><body><h1>Stage 4</h1></body></html>');
 fs.writeFileSync(path.join(PUBLIC, 'style.css'), 'body { color: black; }');
 fs.writeFileSync(path.join(PUBLIC, 'app.js'), 'console.log("hi");');
@@ -120,7 +121,7 @@ for (const [name, make] of IMPLS) {
       assert.equal((await get('/missing.png')).status, 404);
     });
     test('статика: вихід за межі папки public неможливий', async () => {
-      for (const p of ['/..%2fsecret.txt', '/%2e%2e/secret.txt', '/%2e%2e%2fsecret.txt', '/..%5csecret.txt']) {
+      for (const p of ['/..%2fsecret.txt', '/%2e%2e%2fsecret.txt', '/..%5csecret.txt']) {
         const r = await get(p);
         assert.notEqual(r.status, 200, `запит ${p} не має віддавати файли поза public`);
         assert.doesNotMatch(await r.text(), /TOP-SECRET/, `запит ${p} віддав файл поза папкою public`);

@@ -10,8 +10,9 @@ const http = require('node:http');
 const ROOT = path.join(__dirname, '..');
 const mod = (name) => { const p = path.join(ROOT, 'src', name); assert.ok(fs.existsSync(p), `має існувати файл src/${name}`); return require(p); };
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'stage6-'));
+process.on('exit', () => fs.rmSync(TMP, { recursive: true, force: true }));
 const SECRET = 'test-secret-for-stage-6-0123456789';
-const ADMIN = 'admin@duikt.edu.ua';
+const ADMIN = 'admin@example.com';
 const PASSWORD = 'Sup3r-Secret-Pa55';
 
 async function start(dbFile, auth) {
@@ -49,9 +50,9 @@ describe('етап 6: реєстрація і вхід', () => {
   after(() => s?.close());
 
   test('POST /api/auth/register - 201 {id, email, role}, без пароля у відповіді', async () => {
-    const r = await s.call('POST', '/api/auth/register', { email: 'student@duikt.edu.ua', password: PASSWORD });
+    const r = await s.call('POST', '/api/auth/register', { email: 'student@example.com', password: PASSWORD });
     assert.equal(r.status, 201);
-    assert.equal(r.json.email, 'student@duikt.edu.ua');
+    assert.equal(r.json.email, 'student@example.com');
     assert.equal(r.json.role, 'user');
     assert.ok(Number.isInteger(r.json.id));
     assert.doesNotMatch(r.text, /Sup3r-Secret-Pa55/, 'пароль не має повертатися у відповіді');
@@ -69,10 +70,10 @@ describe('етап 6: реєстрація і вхід', () => {
     assert.deepEqual((r.json.details ?? []).map((d) => d.field).sort(), ['email', 'password']);
   });
   test('повторна реєстрація того самого email - 409', async () => {
-    assert.equal((await s.call('POST', '/api/auth/register', { email: 'student@duikt.edu.ua', password: PASSWORD })).status, 409);
+    assert.equal((await s.call('POST', '/api/auth/register', { email: 'student@example.com', password: PASSWORD })).status, 409);
   });
   test('POST /api/auth/login - 200 {token}; JWT із sub, role, exp', async () => {
-    const r = await s.call('POST', '/api/auth/login', { email: 'student@duikt.edu.ua', password: PASSWORD });
+    const r = await s.call('POST', '/api/auth/login', { email: 'student@example.com', password: PASSWORD });
     assert.equal(r.status, 200);
     assert.equal(typeof r.json.token, 'string');
     assert.equal(r.json.token.split('.').length, 3, 'токен має бути JWT з трьох частин');
@@ -82,19 +83,21 @@ describe('етап 6: реєстрація і вхід', () => {
     assert.ok(p.exp > Date.now() / 1000, 'у payload має бути exp у майбутньому');
   });
   test('неправильний пароль і неіснуючий email - 401', async () => {
-    assert.equal((await s.call('POST', '/api/auth/login', { email: 'student@duikt.edu.ua', password: 'wrong-password' })).status, 401);
-    assert.equal((await s.call('POST', '/api/auth/login', { email: 'nobody@duikt.edu.ua', password: PASSWORD })).status, 401);
+    assert.equal((await s.call('POST', '/api/auth/login', { email: 'student@example.com', password: 'wrong-password' })).status, 401);
+    assert.equal((await s.call('POST', '/api/auth/login', { email: 'nobody@example.com', password: PASSWORD })).status, 401);
   });
   test('GET /api/auth/me - поточний користувач за токеном', async () => {
-    const { json } = await s.call('POST', '/api/auth/login', { email: 'student@duikt.edu.ua', password: PASSWORD });
+    const { json } = await s.call('POST', '/api/auth/login', { email: 'student@example.com', password: PASSWORD });
     const me = await s.call('GET', '/api/auth/me', undefined, json.token);
     assert.equal(me.status, 200);
-    assert.equal(me.json.email, 'student@duikt.edu.ua');
+    assert.equal(me.json.email, 'student@example.com');
     assert.equal((await s.call('GET', '/api/auth/me')).status, 401);
   });
   test('паролі зберігаються в БД лише у вигляді хешу', () => {
-    const bytes = fs.readFileSync(dbFile);
-    assert.ok(!bytes.includes(Buffer.from(PASSWORD)), 'у файлі бази даних знайдено пароль у відкритому вигляді - його треба хешувати');
+    for (const f of [dbFile, `${dbFile}-wal`, `${dbFile}-journal`]) {
+      if (!fs.existsSync(f)) continue;
+      assert.ok(!fs.readFileSync(f).includes(Buffer.from(PASSWORD)), `у файлі ${path.basename(f)} знайдено пароль у відкритому вигляді - його треба хешувати`);
+    }
   });
 });
 
@@ -102,9 +105,9 @@ describe('етап 6: захист маршрутів і ролі', () => {
   let s, userToken, adminToken;
   before(async () => {
     s = await safeStart(path.join(TMP, 'roles.db'), { secret: SECRET, adminEmails: [ADMIN] }, async (x) => {
-      await x.call('POST', '/api/auth/register', { email: 'user@duikt.edu.ua', password: PASSWORD });
+      await x.call('POST', '/api/auth/register', { email: 'user@example.com', password: PASSWORD });
       await x.call('POST', '/api/auth/register', { email: ADMIN, password: PASSWORD });
-      userToken = (await x.call('POST', '/api/auth/login', { email: 'user@duikt.edu.ua', password: PASSWORD })).json.token;
+      userToken = (await x.call('POST', '/api/auth/login', { email: 'user@example.com', password: PASSWORD })).json.token;
       adminToken = (await x.call('POST', '/api/auth/login', { email: ADMIN, password: PASSWORD })).json.token;
     });
   });
@@ -134,6 +137,12 @@ describe('етап 6: захист маршрутів і ролі', () => {
     assert.equal((await s.call('GET', '/api/auth/me', undefined, fake)).status, 401);
   });
   test('токен, підписаний іншим секретом, і сміття замість токена - 401', async () => {
+    const crypto = require('node:crypto');
+    const now = Math.floor(Date.now() / 1000);
+    const h = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+    const p = Buffer.from(JSON.stringify({ ...decode(userToken), role: 'admin', iat: now, exp: now + 3600 })).toString('base64url');
+    const sig = crypto.createHmac('sha256', 'some-other-secret-0123456789').update(`${h}.${p}`).digest('base64url');
+    assert.equal((await s.call('GET', '/api/auth/me', undefined, `${h}.${p}.${sig}`)).status, 401, 'токен, підписаний чужим секретом, не має прийматися');
     assert.equal((await s.call('GET', '/api/auth/me', undefined, 'abc.def.ghi')).status, 401);
     assert.equal((await s.call('GET', '/api/auth/me', undefined, 'not-a-token')).status, 401);
   });
@@ -147,8 +156,8 @@ describe('етап 6: термін дії токена', () => {
   test('після закінчення tokenTtl токен не приймається - 401', async () => {
     const s = await safeStart(path.join(TMP, 'ttl.db'), { secret: SECRET, tokenTtl: 1 });
     try {
-      await s.call('POST', '/api/auth/register', { email: 'ttl@duikt.edu.ua', password: PASSWORD });
-      const { json } = await s.call('POST', '/api/auth/login', { email: 'ttl@duikt.edu.ua', password: PASSWORD });
+      await s.call('POST', '/api/auth/register', { email: 'ttl@example.com', password: PASSWORD });
+      const { json } = await s.call('POST', '/api/auth/login', { email: 'ttl@example.com', password: PASSWORD });
       assert.equal((await s.call('GET', '/api/auth/me', undefined, json.token)).status, 200);
       await new Promise((r) => setTimeout(r, 2100));
       assert.equal((await s.call('GET', '/api/auth/me', undefined, json.token)).status, 401);

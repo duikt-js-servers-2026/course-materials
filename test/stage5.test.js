@@ -10,6 +10,7 @@ const http = require('node:http');
 const ROOT = path.join(__dirname, '..');
 const mod = (name) => { const p = path.join(ROOT, 'src', name); assert.ok(fs.existsSync(p), `має існувати файл src/${name}`); return require(p); };
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'stage5-'));
+process.on('exit', () => fs.rmSync(TMP, { recursive: true, force: true }));
 let dbCounter = 0;
 const freshDb = () => path.join(TMP, `test-${++dbCounter}.db`);
 
@@ -37,7 +38,7 @@ async function safeStart(dbFile, setup) {
 const P = (over = {}) => ({ title: 'Кобзар', categoryId: 1, price: 250, quantity: 3, date: '2026-09-01', ...over });
 
 describe('етап 5: структура', () => {
-  test('є src/rest.js з createRestApp і express у залежностях', () => {
+  test('є src/rest.js з функцією createRestApp', () => {
     assert.equal(typeof mod('rest.js').createRestApp, 'function', 'src/rest.js має експортувати createRestApp');
   });
 });
